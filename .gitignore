@@ -1,6 +1,5 @@
 venv/
 data/raw/
-*.pkl
 mlruns/
 __pycache__/
 *.pyc

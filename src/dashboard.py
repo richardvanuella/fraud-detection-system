@@ -9,124 +9,175 @@ import random
 
 st.set_page_config(
     page_title="Fraud Detection Dashboard",
-    page_icon="🔍",
+    page_icon="",
     layout="wide"
 )
 
-st.title("🔍 Real-Time Fraud Detection Dashboard")
+st.title("Real-Time Fraud Detection Dashboard")
 st.markdown("Sistem deteksi transaksi mencurigakan secara otomatis menggunakan Machine Learning (XGBoost)")
 st.markdown("---")
 
-# ── Load dataset sample buat simulasi ──
 @st.cache_data
 def load_sample_data():
     import os
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     df = pd.read_csv(os.path.join(BASE_DIR, 'data', 'raw', 'creditcard.csv'))
-    scaler_mean = df['Amount'].mean()
-    scaler_std = df['Amount'].std()
-    return df, scaler_mean, scaler_std
+    return df
 
-df, amount_mean, amount_std = load_sample_data()
+df = load_sample_data()
 
-# ── Tabs ──
-tab1, tab2, tab3 = st.tabs(["🏦 Simulasi Transaksi", "📊 Model Performance", "📋 Riwayat Transaksi"])
+# ── Mapping merchant ke pola transaksi ──
+MERCHANT_PROFILES = {
+    "Indomaret / Alfamart": {"amount_range": (10000, 200000), "fraud_risk": "low"},
+    "Shopee / Tokopedia": {"amount_range": (50000, 5000000), "fraud_risk": "medium"},
+    "Amazon / eBay (Luar Negeri)": {"amount_range": (100000, 10000000), "fraud_risk": "high"},
+    "ATM Withdrawal": {"amount_range": (100000, 2000000), "fraud_risk": "medium"},
+    "Transfer Bank": {"amount_range": (50000, 50000000), "fraud_risk": "medium"},
+    "Restoran / Kafe": {"amount_range": (20000, 500000), "fraud_risk": "low"},
+    "Merchant Tidak Dikenal": {"amount_range": (100000, 10000000), "fraud_risk": "high"},
+}
+
+tab1, tab2, tab3 = st.tabs(["Simulasi Transaksi", "Model Performance", "Riwayat Transaksi"])
 
 with tab1:
-    st.markdown("### 🏦 Simulasi Transaksi Real-Time")
-    st.markdown("Klik tombol di bawah untuk mensimulasikan transaksi yang masuk ke sistem bank.")
+    st.markdown("### Simulasi Transaksi")
+    st.markdown("Isi form di bawah seperti transaksi kartu kredit biasa.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⚡ Simulasi Transaksi Normal", use_container_width=True):
-            # Ambil random transaksi normal dari dataset
-            normal_df = df[df['Class'] == 0].sample(1)
-            row = normal_df.iloc[0]
-            st.session_state['last_transaction'] = row
-            st.session_state['last_type'] = 'normal'
+    col_form, col_result = st.columns([1, 1])
 
-    with col2:
-        if st.button("🚨 Simulasi Transaksi Fraud", use_container_width=True):
-            # Ambil random transaksi fraud dari dataset
-            fraud_df = df[df['Class'] == 1].sample(1)
-            row = fraud_df.iloc[0]
-            st.session_state['last_transaction'] = row
-            st.session_state['last_type'] = 'fraud'
+    with col_form:
+        st.markdown("#### Detail Transaksi")
 
-    if 'last_transaction' in st.session_state:
-        row = st.session_state['last_transaction']
+        merchant = st.selectbox("Nama Merchant", list(MERCHANT_PROFILES.keys()))
+        amount = st.number_input(
+            "Nominal Transaksi (Rp)",
+            min_value=1000,
+            max_value=100000000,
+            value=150000,
+            step=10000
+        )
+        transaction_type = st.selectbox("Tipe Transaksi", ["Online", "Tap / Gesek Kartu", "Transfer", "ATM"])
+        location = st.selectbox("Lokasi Transaksi", ["Dalam Negeri", "Luar Negeri"])
+        hour = st.slider("Jam Transaksi", 0, 23, 14)
 
-        # Tampilkan info transaksi (yang bisa dimengerti user awam)
-        st.markdown("#### 📄 Detail Transaksi")
-        info_col1, info_col2, info_col3 = st.columns(3)
-        info_col1.metric("💰 Nominal", f"${row['Amount']:.2f}")
-        info_col2.metric("⏱️ Waktu", f"{int(row['Time']//3600)} jam {int((row['Time']%3600)//60)} menit")
-        info_col3.metric("🔖 ID Transaksi", f"TXN-{random.randint(100000, 999999)}")
+        is_overseas = location == "Luar Negeri"
+        is_night = hour < 6 or hour > 22
+        is_high_risk_merchant = MERCHANT_PROFILES[merchant]["fraud_risk"] == "high"
 
-        # Kirim ke API
-        v_features = {f'V{i}': float(row[f'V{i}']) for i in range(1, 29)}
-        payload = {**v_features, "Amount": float(row['Amount']), "Time": float(row['Time'])}
+        # Konversi input ke fitur model
+        # Ambil sample dari dataset sesuai risk level
+        if is_overseas or is_high_risk_merchant:
+            sample_pool = df[df['Class'] == 1] if (is_overseas and is_night) else df[df['Class'] == 0].sample(frac=0.01)
+        else:
+            sample_pool = df[df['Class'] == 0].sample(frac=0.01)
 
-        with st.spinner("🔄 Menganalisis transaksi..."):
-            time.sleep(0.8)  # biar kerasa "real-time"
-            try:
-                response = requests.post("http://127.0.0.1:8000/predict", json=payload)
-                result = response.json()
+        base_row = sample_pool.sample(1).iloc[0]
 
-                st.markdown("#### 🎯 Hasil Analisis")
-                res_col1, res_col2, res_col3 = st.columns(3)
+        # Modifikasi V17 dan V14 berdasarkan risk (fitur paling berpengaruh)
+        v_features = {f'V{i}': float(base_row[f'V{i}']) for i in range(1, 29)}
+        if is_overseas and is_night:
+            v_features['V17'] = random.uniform(-8, -5)
+            v_features['V14'] = random.uniform(-7, -4)
+            v_features['V12'] = random.uniform(-5, -3)
+        elif is_overseas or is_high_risk_merchant:
+            v_features['V17'] = random.uniform(-4, -2)
+            v_features['V14'] = random.uniform(-3, -1)
 
-                with res_col1:
-                    if result['is_fraud']:
-                        st.error("🚨 TRANSAKSI MENCURIGAKAN!")
-                        st.markdown("Transaksi ini **diblokir** dan dilaporkan ke tim analis.")
-                    else:
-                        st.success("✅ TRANSAKSI AMAN")
-                        st.markdown("Transaksi ini **disetujui** oleh sistem.")
+        amount_normalized = amount / 10000
 
-                with res_col2:
+        if st.button("Proses Transaksi", use_container_width=True):
+            st.session_state['pending_transaction'] = {
+                "v_features": v_features,
+                "amount": amount_normalized,
+                "merchant": merchant,
+                "amount_display": amount,
+                "type": transaction_type,
+                "location": location,
+                "hour": hour
+            }
+
+    with col_result:
+        st.markdown("#### Hasil Analisis")
+
+        if 'pending_transaction' in st.session_state:
+            txn = st.session_state['pending_transaction']
+
+            with st.spinner("Menganalisis transaksi..."):
+                time.sleep(0.8)
+                payload = {**txn['v_features'], "Amount": txn['amount'], "Time": float(txn['hour'] * 3600)}
+
+                try:
+                    response = requests.post("http://127.0.0.1:8000/predict", json=payload)
+                    result = response.json()
+
                     confidence = result['confidence'] * 100
+
+                    # Info transaksi
+                    st.markdown(f"**ID Transaksi:** TXN-{random.randint(100000, 999999)}")
+                    st.markdown(f"**Merchant:** {txn['merchant']}")
+                    st.markdown(f"**Nominal:** Rp {txn['amount_display']:,}")
+                    st.markdown(f"**Tipe:** {txn['type']}")
+                    st.markdown(f"**Lokasi:** {txn['location']}")
+                    st.markdown(f"**Jam:** {txn['hour']:02d}:00")
+                    st.markdown("---")
+
+                    if result['is_fraud']:
+                        st.error("TRANSAKSI DIBLOKIR")
+                        st.markdown("Sistem mendeteksi pola mencurigakan pada transaksi ini. Tim analis akan segera menghubungi pemegang kartu.")
+                    else:
+                        st.success("TRANSAKSI DISETUJUI")
+                        st.markdown("Transaksi berhasil diproses.")
+
                     st.metric("Tingkat Kecurigaan", f"{confidence:.1f}%")
-                    if confidence > 50:
-                        st.warning("Tingkat kecurigaan tinggi!")
+
+                    # Faktor risiko
+                    st.markdown("**Faktor yang dianalisis:**")
+                    factors = []
+                    if txn['location'] == "Luar Negeri":
+                        factors.append("Transaksi dari luar negeri")
+                    if txn['hour'] < 6 or txn['hour'] > 22:
+                        factors.append("Transaksi di luar jam normal")
+                    if MERCHANT_PROFILES[txn['merchant']]['fraud_risk'] == 'high':
+                        factors.append("Merchant berisiko tinggi")
+                    if txn['amount_display'] > 5000000:
+                        factors.append("Nominal transaksi besar")
+
+                    if factors:
+                        for f in factors:
+                            st.warning(f)
                     else:
-                        st.info("Tingkat kecurigaan rendah.")
+                        st.info("Tidak ada faktor risiko terdeteksi")
 
-                with res_col3:
-                    actual = "FRAUD" if row['Class'] == 1 else "NORMAL"
-                    predicted = "FRAUD" if result['is_fraud'] else "NORMAL"
-                    if actual == predicted:
-                        st.metric("Akurasi Prediksi", "✅ Benar")
-                    else:
-                        st.metric("Akurasi Prediksi", "❌ Salah")
+                    # Simpan riwayat
+                    if 'history' not in st.session_state:
+                        st.session_state['history'] = []
 
-                # Simpan ke riwayat
-                if 'history' not in st.session_state:
-                    st.session_state['history'] = []
+                    st.session_state['history'].append({
+                        "ID": f"TXN-{random.randint(100000, 999999)}",
+                        "Merchant": txn['merchant'],
+                        "Nominal": f"Rp {txn['amount_display']:,}",
+                        "Lokasi": txn['location'],
+                        "Jam": f"{txn['hour']:02d}:00",
+                        "Status": "Diblokir" if result['is_fraud'] else "Disetujui",
+                        "Kecurigaan": f"{confidence:.1f}%"
+                    })
 
-                st.session_state['history'].append({
-                    "ID": f"TXN-{random.randint(100000, 999999)}",
-                    "Nominal": f"${row['Amount']:.2f}",
-                    "Prediksi": predicted,
-                    "Aktual": actual,
-                    "Kecurigaan": f"{confidence:.1f}%",
-                    "Status": "✅ Benar" if actual == predicted else "❌ Salah"
-                })
-
-            except Exception as e:
-                st.error(f"❌ API tidak bisa dihubungi. Pastikan FastAPI jalan!")
+                except Exception as e:
+                    st.error("API tidak bisa dihubungi. Pastikan FastAPI jalan!")
+        else:
+            st.info("Isi form di sebelah kiri dan klik 'Proses Transaksi' untuk melihat hasil analisis.")
 
 with tab2:
-    st.markdown("### 📊 Performa Model XGBoost")
+    st.markdown("### Performa Model XGBoost")
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Model", "XGBoost")
     m2.metric("ROC-AUC", "0.9745")
-    m3.metric("Fraud Recall", "86%", help="86% fraud berhasil terdeteksi")
-    m4.metric("Fraud Precision", "68%", help="68% prediksi fraud ternyata benar")
+    m3.metric("Fraud Recall", "86%")
+    m4.metric("Fraud Precision", "68%")
 
     st.markdown("---")
-    st.markdown("#### 🔢 Confusion Matrix")
+    st.markdown("#### Confusion Matrix")
 
     cm = np.array([[56800, 64], [14, 84]])
     fig, ax = plt.subplots(figsize=(5, 4))
@@ -139,22 +190,23 @@ with tab2:
     st.pyplot(fig)
 
     st.markdown("""
-    **Cara baca:**
-    - **56800** transaksi normal → diprediksi benar sebagai Normal ✅
-    - **84** transaksi fraud → berhasil terdeteksi ✅  
-    - **64** transaksi normal → salah diprediksi sebagai Fraud ⚠️
-    - **14** transaksi fraud → lolos tidak terdeteksi ❌
+    Cara baca:
+    - 56800 transaksi normal diprediksi benar sebagai Normal
+    - 84 transaksi fraud berhasil terdeteksi
+    - 64 transaksi normal salah diprediksi sebagai Fraud
+    - 14 transaksi fraud lolos tidak terdeteksi
     """)
 
 with tab3:
-    st.markdown("### 📋 Riwayat Transaksi")
+    st.markdown("### Riwayat Transaksi")
 
     if 'history' in st.session_state and len(st.session_state['history']) > 0:
         history_df = pd.DataFrame(st.session_state['history'])
         st.dataframe(history_df, use_container_width=True)
 
         total = len(history_df)
-        benar = history_df[history_df['Status'] == '✅ Benar'].shape[0]
-        st.metric("Akurasi Sesi Ini", f"{benar}/{total} ({benar/total*100:.0f}%)")
+        diblokir = history_df[history_df['Status'] == 'Diblokir'].shape[0]
+        st.metric("Total Transaksi Sesi Ini", total)
+        st.metric("Transaksi Diblokir", diblokir)
     else:
         st.info("Belum ada transaksi. Coba simulasikan transaksi di tab pertama!")
