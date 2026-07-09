@@ -130,6 +130,30 @@ with tab1:
 
                     st.metric("Tingkat Kecurigaan", f"{confidence:.1f}%")
 
+                    # Feature importance explanation
+                    st.markdown("---")
+                    st.markdown("**Faktor utama yang dianalisis model:**")
+                    
+                    top_features = {
+                        "V14": txn['v_features']['V14'],
+                        "V4": txn['v_features']['V4'],
+                        "V12": txn['v_features']['V12'],
+                        "V10": txn['v_features']['V10'],
+                        "V17": txn['v_features']['V17'],
+                    }
+                    
+                    for feat, val in top_features.items():
+                        if val < -2:
+                            arah = "pola mencurigakan"
+                            color = "red"
+                        elif val > 2:
+                            arah = "pola normal"
+                            color = "green"
+                        else:
+                            arah = "pola netral"
+                            color = "gray"
+                        st.markdown(f"- **{feat}**: {arah} (nilai: {val:.3f})")
+
                     # Faktor risiko
                     st.markdown("**Faktor yang dianalisis:**")
                     factors = []
