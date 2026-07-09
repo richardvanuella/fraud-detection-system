@@ -1,3 +1,5 @@
+from pyexpat import features
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import joblib
@@ -35,20 +37,22 @@ def predict(transaction: Transaction):
     data = dict(transaction)
     
     # Scale Amount & Time
-    amount_scaled = scaler_amount.transform([[data['Amount']]])[0][0]
-    time_scaled = scaler_amount.transform([[data['Time']]])[0][0]
+    amount_scaled = float(scaler_amount.transform([[data['Amount']]])[0][0])
+    time_scaled = float(scaler_amount.transform([[data['Time']]])[0][0])
     
-    # Susun fitur sesuai urutan training
+    # Susun fitur sesuai urutan training (V1-V28, Amount_scaled, Time_scaled)
     features = [data[f'V{i}'] for i in range(1, 29)]
-    features.extend([amount_scaled, time_scaled])
+    features.append(amount_scaled)
+    features.append(time_scaled)
     
     features = np.array(features).reshape(1, -1)
     
-    prediction = model.predict(features)[0]
-    probability = model.predict_proba(features)[0][1]
-    
+    prediction = int(model.predict(features)[0])
+    probability = float(model.predict_proba(features)[0][1])
+    print(f"Probability raw: {model.predict_proba(features)}")
+    print(f"Features: {features}")
     return {
         "is_fraud": bool(prediction),
-        "confidence": round(float(probability), 4),
+        "confidence": round(probability, 4),
         "status": "FRAUD DETECTED" if prediction == 1 else "NORMAL"
     }
